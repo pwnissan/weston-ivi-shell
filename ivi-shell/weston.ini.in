@@ -8,6 +8,7 @@ ivi-shell-user-interface=@abs_top_builddir@/weston-ivi-shell-user-interface
 cursor-theme=default
 cursor-size=32
 
+id-per-output=10000
 base-layer-id=1000
 workspace-background-layer-id=2000
 workspace-layer-id=3000
@@ -34,58 +35,58 @@ workspace-background-id=2001
 workspace-id=0
 icon-id=4001
 icon=@abs_top_builddir@/data/icon_ivi_flower.png
-path=@abs_top_builddir@/clients/weston-flower
+path=@abs_top_builddir@/weston-flower
 
 [ivi-launcher]
 workspace-id=0
 icon-id=4002
 icon=@abs_top_builddir@/data/icon_ivi_clickdot.png
-path=@abs_top_builddir@/clients/weston-clickdot
+path=@abs_top_builddir@/weston-clickdot
 
 [ivi-launcher]
 workspace-id=1
 icon-id=4003
 icon=@abs_top_builddir@/data/icon_ivi_simple-egl.png
-path=@abs_top_builddir@/clients/weston-simple-egl
+path=@abs_top_builddir@/weston-simple-egl
 
 [ivi-launcher]
 workspace-id=1
 icon-id=4004
 icon=@abs_top_builddir@/data/icon_ivi_simple-shm.png
-path=@abs_top_builddir@/clients/weston-simple-shm
+path=@abs_top_builddir@/weston-simple-shm
 
 [ivi-launcher]
 workspace-id=2
 icon-id=4005
 icon=@abs_top_builddir@/data/icon_ivi_smoke.png
-path=@abs_top_builddir@/clients/weston-smoke
+path=@abs_top_builddir@/weston-smoke
 
 [ivi-launcher]
 workspace-id=3
 icon-id=4006
 icon=@abs_top_builddir@/data/icon_ivi_flower.png
-path=@abs_top_builddir@/clients/weston-flower
+path=@abs_top_builddir@/weston-flower
 
 [ivi-launcher]
 workspace-id=3
 icon-id=4007
 icon=@abs_top_builddir@/data/icon_ivi_clickdot.png
-path=@abs_top_builddir@/clients/weston-clickdot
+path=@abs_top_builddir@/weston-clickdot
 
 [ivi-launcher]
 workspace-id=3
 icon-id=4008
 icon=@abs_top_builddir@/data/icon_ivi_simple-egl.png
-path=@abs_top_builddir@/clients/weston-simple-egl
+path=@abs_top_builddir@/weston-simple-egl
 
 [ivi-launcher]
 workspace-id=3
 icon-id=4009
 icon=@abs_top_builddir@/data/icon_ivi_simple-shm.png
-path=@abs_top_builddir@/clients/weston-simple-shm
+path=@abs_top_builddir@/weston-simple-shm
 
 [ivi-launcher]
 workspace-id=3
 icon-id=4010
 icon=@abs_top_builddir@/data/icon_ivi_smoke.png
-path=@abs_top_builddir@/clients/weston-smoke
+path=@abs_top_builddir@/weston-smoke

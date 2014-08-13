@@ -44,6 +44,7 @@
             </description>
             <arg name="seat" type="object" interface="wl_seat"/>
             <arg name="serial" type="uint"/>
+			<arg name="output" type="object" interface="wl_output"/>
         </request>
 
         <enum name="layout_mode">
@@ -59,6 +60,7 @@
 		as a reference; tiling, side by side, full_screen, and random.
 	    </description>
             <arg name="layout_mode" type="uint"/>
+			<arg name="output" type="object" interface="wl_output"/>
         </request>
 
         <enum name="home">
@@ -84,6 +86,7 @@
 			: path to wayland application
 	    </description>
             <arg name="home" type="uint"/>
+			<arg name="output" type="object" interface="wl_output"/>
         </request>
 
         <event name="workspace_end_control">

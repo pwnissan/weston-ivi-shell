@@ -279,8 +279,11 @@ ivi_layout_getScreenFromId(uint32_t id_screen);
  */
 int32_t
 ivi_layout_getScreenResolution(struct ivi_layout_screen *iviscrn,
-                                  int32_t *pWidth,
-                                  int32_t *pHeight);
+                                  uint32_t *pWidth,
+                                  uint32_t *pHeight);
+
+struct weston_output *
+ivi_layout_getScreenWestonOutput(struct ivi_layout_screen *iviscrn);
 
 /**
  * \brief register for notification on property changes of surface
@@ -404,7 +407,7 @@ ivi_layout_getNumberOfHardwareLayers(uint32_t id_screen,
  * \return -1 if the method call was failed
  */
 int32_t
-ivi_layout_getScreens(int32_t *pLength, struct ivi_layout_screen ***ppArray);
+ivi_layout_getScreens(uint32_t *pLength, struct ivi_layout_screen ***ppArray);
 
 /**
  * \brief Get the screens under the given layer
