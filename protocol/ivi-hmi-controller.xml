@@ -89,8 +89,15 @@
 			<arg name="output" type="object" interface="wl_output"/>
         </request>
 
+		<request name="set_app_screen">
+            <description summary="specify the screen that the application running on">
+		</description>
+			<arg name="output" type="object" interface="wl_output"/>
+        </request>
+
         <event name="workspace_end_control">
             <description summary="notify controlling workspace end"/>
+            <arg name="seat" type="object" interface="wl_seat"/>
             <arg name="is_controlled" type="int"/>
         </event>
 

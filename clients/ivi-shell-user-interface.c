@@ -84,28 +84,33 @@ enum cursor_type {
     CURSOR_BLANK
 };
 
-
 struct wlContextCommon {
     struct wl_display      *wlDisplay;
     struct wl_registry     *wlRegistry;
     struct wl_compositor   *wlCompositor;
     struct wl_shm          *wlShm;
-    struct wl_seat         *wlSeat;
-    struct wl_pointer      *wlPointer;
-    struct wl_touch        *wlTouch;
+	struct wl_list         seat_list;
     struct ivi_application *iviApplication;
     struct ivi_hmi_controller  *hmiCtrl;
     struct hmi_homescreen_config *hmi_config;
     struct wl_list         list_wlContextStruct;
-    struct wl_surface      *enterSurface;
+    struct wl_list          outputs;
+    uint32_t                formats;
+};
+
+struct seat {
+	struct wl_list         link;
+	struct wlContextCommon  *context;
+	struct wl_seat         *wlSeat;
+    struct wl_pointer      *wlPointer;
+    struct wl_touch        *wlTouch;
+	struct wl_surface      *enterSurface;
     int32_t                 is_home_on;
     struct wl_cursor_theme  *cursor_theme;
     struct wl_cursor        **cursors;
     struct wl_surface       *pointer_surface;
     enum   cursor_type      current_cursor;
     uint32_t                enter_serial;
-	struct wl_list          outputs;
-    uint32_t                formats;
 };
 
 struct
@@ -233,20 +238,20 @@ getContextOfWlSurface(struct wlContextCommon *pCtx, struct wl_surface *wlSurface
 }
 
 static void
-set_pointer_image(struct wlContextCommon *pCtx, uint32_t index)
+set_pointer_image(struct seat *seat, uint32_t index)
 {
-    if (!pCtx->wlPointer ||
-        !pCtx->cursors) {
+    if (!seat->wlPointer ||
+        !seat->cursors) {
         return;
     }
 
-    if (CURSOR_BLANK == pCtx->current_cursor) {
-        wl_pointer_set_cursor(pCtx->wlPointer, pCtx->enter_serial,
+    if (CURSOR_BLANK == seat->current_cursor) {
+        wl_pointer_set_cursor(seat->wlPointer, seat->enter_serial,
                               NULL, 0, 0);
         return;
     }
 
-    struct wl_cursor *cursor = pCtx->cursors[pCtx->current_cursor];
+    struct wl_cursor *cursor = seat->cursors[seat->current_cursor];
     if (!cursor) {
         return;
     }
@@ -263,16 +268,16 @@ set_pointer_image(struct wlContextCommon *pCtx, uint32_t index)
         return;
     }
 
-    wl_pointer_set_cursor(pCtx->wlPointer, pCtx->enter_serial,
-                          pCtx->pointer_surface,
+    wl_pointer_set_cursor(seat->wlPointer, seat->enter_serial,
+                          seat->pointer_surface,
                           image->hotspot_x, image->hotspot_y);
 
-    wl_surface_attach(pCtx->pointer_surface, buffer, 0, 0);
+    wl_surface_attach(seat->pointer_surface, buffer, 0, 0);
 
-    wl_surface_damage(pCtx->pointer_surface, 0, 0,
+    wl_surface_damage(seat->pointer_surface, 0, 0,
                       image->width, image->height);
 
-    wl_surface_commit(pCtx->pointer_surface);
+    wl_surface_commit(seat->pointer_surface);
 }
 
 static void
@@ -282,10 +287,10 @@ PointerHandleEnter(void* data, struct wl_pointer* wlPointer, uint32_t serial,
     (void)wlPointer;
     (void)serial;
 
-    struct wlContextCommon *pCtx = data;
-    pCtx->enter_serial = serial;
-    pCtx->enterSurface = wlSurface;
-    set_pointer_image(pCtx, 0);
+    struct seat *seat = data;
+    seat->enter_serial = serial;
+    seat->enterSurface = wlSurface;
+    set_pointer_image(seat, 0);
 #ifdef _DEBUG
     printf("ENTER PointerHandleEnter: x(%d), y(%d)\n", sx, sy);
 #endif
@@ -298,8 +303,8 @@ PointerHandleLeave(void* data, struct wl_pointer* wlPointer, uint32_t serial,
     (void)wlPointer;
     (void)wlSurface;
 
-    struct wlContextCommon *pCtx = data;
-    pCtx->enterSurface = NULL;
+    struct seat *seat = data;
+    seat->enterSurface = NULL;
 
 #ifdef _DEBUG
     printf("ENTER PointerHandleLeave: serial(%d)\n", serial);
@@ -345,14 +350,17 @@ static pid_t execute_process(char* path, char *argv[])
 }
 
 static int32_t
-launcher_button(uint32_t surfaceId, struct wl_list *launcher_list)
+launcher_button( struct ivi_hmi_controller *hmi_ctrl,
+			uint32_t surfaceId, struct output *output)
 {
     struct hmi_homescreen_launcher *launcher = NULL;
 
-    wl_list_for_each(launcher, launcher_list, link) {
+    wl_list_for_each(launcher, &output->launcher_list, link) {
         if (surfaceId != launcher->icon_surface_id) {
             continue;
         }
+
+		ivi_hmi_controller_set_app_screen(hmi_ctrl, output->output);
 
         char *argv[] = {NULL};
         execute_process(launcher->path, argv);
@@ -395,7 +403,7 @@ touch_up(struct ivi_hmi_controller *hmi_ctrl,
 	struct output *output = context->output;
 	uint32_t id_surface = context->id_surface;
 
-    if (launcher_button(id_surface, &output->launcher_list)) {
+    if (launcher_button(hmi_ctrl, id_surface, output)) {
         *is_home_on = 0;
         ivi_hmi_controller_home(hmi_ctrl, IVI_HMI_CONTROLLER_HOME_OFF,
 								output->output);
@@ -436,7 +444,8 @@ PointerHandleButton(void* data, struct wl_pointer* wlPointer, uint32_t serial,
     (void)wlPointer;
     (void)serial;
     (void)time;
-    struct wlContextCommon *pCtx = data;
+	struct seat *seat = (struct seat *)data;
+    struct wlContextCommon *pCtx = seat->context;
     struct ivi_hmi_controller *hmi_ctrl = pCtx->hmiCtrl;
 
     if (BTN_RIGHT == button) {
@@ -444,18 +453,18 @@ PointerHandleButton(void* data, struct wl_pointer* wlPointer, uint32_t serial,
     }
 
 	struct wlContextStruct *context = getContextOfWlSurface(pCtx,
-										pCtx->enterSurface);
+										seat->enterSurface);
     const uint32_t id_surface = context->id_surface;
 
     switch (state) {
     case WL_POINTER_BUTTON_STATE_RELEASED:
-        touch_up(hmi_ctrl, &pCtx->is_home_on, context);
+        touch_up(hmi_ctrl, &seat->is_home_on, context);
         break;
 
     case WL_POINTER_BUTTON_STATE_PRESSED:
 
         if (isWorkspaceSurface(id_surface, context->output)) {
-            ivi_hmi_controller_workspace_control(hmi_ctrl, pCtx->wlSeat, serial,
+            ivi_hmi_controller_workspace_control(hmi_ctrl, seat->wlSeat, serial,
 												 context->output->output);
         }
 
@@ -493,15 +502,16 @@ static void
 TouchHandleDown(void *data, struct wl_touch *wlTouch, uint32_t serial, uint32_t time,
                 struct wl_surface *surface, int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
 {
-    struct wlContextCommon *pCtx = data;
+	struct seat *seat = (struct seat *)data;
+    struct wlContextCommon *pCtx = seat->context;
     struct ivi_hmi_controller *hmi_ctrl = pCtx->hmiCtrl;
 
     if (0 == id){
-        pCtx->enterSurface = surface;
+        seat->enterSurface = surface;
     }
 
 	struct wlContextStruct *context = getContextOfWlSurface(pCtx,
-											pCtx->enterSurface);
+											seat->enterSurface);
     const uint32_t id_surface = context->id_surface;
 
     /**
@@ -512,7 +522,7 @@ TouchHandleDown(void *data, struct wl_touch *wlTouch, uint32_t serial, uint32_t 
      * back it.
      */
     if (isWorkspaceSurface(id_surface, context->output)) {
-        ivi_hmi_controller_workspace_control(hmi_ctrl, pCtx->wlSeat, serial,
+        ivi_hmi_controller_workspace_control(hmi_ctrl, seat->wlSeat, serial,
 											 context->output->output);
     }
 }
@@ -523,17 +533,18 @@ TouchHandleUp(void *data, struct wl_touch *wlTouch, uint32_t serial, uint32_t ti
 {
     (void)serial;
     (void)time;
-    struct wlContextCommon *pCtx = data;
+	struct seat *seat = (struct seat *)data;
+    struct wlContextCommon *pCtx = seat->context;
     struct ivi_hmi_controller *hmi_ctrl = pCtx->hmiCtrl;
 
 	struct wlContextStruct *context = getContextOfWlSurface(pCtx,
-											pCtx->enterSurface);
+											seat->enterSurface);
 
     /**
      * triggering event according to touch-up happening on which surface.
      */
     if (id == 0){
-        touch_up(hmi_ctrl, &pCtx->is_home_on, context);
+        touch_up(hmi_ctrl, &seat->is_home_on, context);
     }
 }
 
@@ -568,10 +579,11 @@ static void
 seat_handle_capabilities(void* data, struct wl_seat* seat, uint32_t caps)
 {
     (void)seat;
-    struct wlContextCommon* p_wlCtx = (struct wlContextCommon*)data;
-    struct wl_seat* wlSeat = p_wlCtx->wlSeat;
-    struct wl_pointer* wlPointer = p_wlCtx->wlPointer;
-    struct wl_touch* wlTouch = p_wlCtx->wlTouch;
+	struct seat *hmi_seat = (struct seat*)data;
+    struct wlContextCommon* p_wlCtx = hmi_seat->context;
+    struct wl_seat* wlSeat = hmi_seat->wlSeat;
+    struct wl_pointer* wlPointer = hmi_seat->wlPointer;
+    struct wl_touch* wlTouch = hmi_seat->wlTouch;
 
     if (p_wlCtx->hmi_config->cursor_theme) {
         if ((caps & WL_SEAT_CAPABILITY_POINTER) && !wlPointer){
@@ -583,7 +595,7 @@ seat_handle_capabilities(void* data, struct wl_seat* seat, uint32_t caps)
             wl_pointer_destroy(wlPointer);
             wlPointer = NULL;
         }
-        p_wlCtx->wlPointer = wlPointer;
+        hmi_seat->wlPointer = wlPointer;
     }
 
     if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !wlTouch){
@@ -595,7 +607,7 @@ seat_handle_capabilities(void* data, struct wl_seat* seat, uint32_t caps)
         wl_touch_destroy(wlTouch);
         wlTouch = NULL;
     }
-    p_wlCtx->wlTouch = wlTouch;
+    hmi_seat->wlTouch = wlTouch;
 }
 
 static struct wl_seat_listener seat_Listener = {
@@ -610,6 +622,7 @@ static struct wl_seat_listener seat_Listener = {
 static void
 ivi_hmi_controller_workspace_end_control(void *data,
                                      struct ivi_hmi_controller *hmi_ctrl,
+									 struct wl_seat *wl_seat,
                                      int32_t is_controlled)
 {
     if (is_controlled) {
@@ -617,10 +630,18 @@ ivi_hmi_controller_workspace_end_control(void *data,
     }
 
     struct wlContextCommon *pCtx = data;
-	struct wlContextStruct *context = getContextOfWlSurface(pCtx,
-											pCtx->enterSurface);
-    const uint32_t id_surface = context->id_surface;
-	struct output *output;
+	struct wlContextStruct *context;
+	uint32_t id_surface;
+	struct output  *output;
+	struct seat *seat;
+
+	wl_list_for_each(seat, &pCtx->seat_list, link) {
+		if (seat->wlSeat == wl_seat)
+			break;
+	}
+
+	context = getContextOfWlSurface(pCtx, seat->enterSurface);
+	id_surface = context->id_surface;
 
     /**
      * During being controlled by hmi-controller, any input event is not
@@ -629,8 +650,8 @@ ivi_hmi_controller_workspace_end_control(void *data,
      *
      */
 	wl_list_for_each(output, &pCtx->outputs, link) {
-    	if (launcher_button(id_surface, &output->launcher_list)) {
-        	pCtx->is_home_on = 0;
+    	if (launcher_button(hmi_ctrl, id_surface, output)) {
+        	seat->is_home_on = 0;
         	ivi_hmi_controller_home(hmi_ctrl, IVI_HMI_CONTROLLER_HOME_OFF,
 									output->output);
     	}
@@ -751,6 +772,39 @@ outputs_destroy(struct wlContextCommon *context)
 		output_destroy(output);
 }
 
+static void
+create_seat(struct wlContextCommon *context, uint32_t id)
+{
+	struct seat *seat;
+
+	seat = MEM_ALLOC(sizeof(*seat));
+	if (!seat)
+		return;
+
+	seat->wlSeat = wl_registry_bind(context->wlRegistry, id,
+									&wl_seat_interface, 1);
+	seat->context = context;
+	wl_seat_add_listener(seat->wlSeat, &seat_Listener, seat);
+
+	wl_list_insert(context->seat_list.prev, &seat->link);
+}
+
+static void
+seat_destroy(struct seat *seat)
+{
+	wl_list_remove(&seat->link);
+	free(seat);
+}
+
+static void
+seats_destroy(struct wlContextCommon *context)
+{
+	struct seat *seat, *next;
+
+	wl_list_for_each_safe(seat, next, &context->seat_list, link)
+		seat_destroy(seat);
+}
+
 /**
  * Registration of interfaces
  */
@@ -772,8 +826,7 @@ registry_handle_global(void* data, struct wl_registry* registry, uint32_t name,
             break;
         }
         if (!strcmp(interface, "wl_seat")) {
-            p_wlCtx->wlSeat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
-            wl_seat_add_listener(p_wlCtx->wlSeat, &seat_Listener, data);
+			create_seat(p_wlCtx, name);
             break;
         }
         if (!strcmp(interface, "ivi_application")) {
@@ -926,36 +979,54 @@ create_cursors(struct wlContextCommon *cmm)
     struct wl_cursor *cursor = NULL;
     char* cursor_theme = cmm->hmi_config->cursor_theme;
     int32_t cursor_size = cmm->hmi_config->cursor_size;
+	struct seat *seat;
 
-    cmm->cursor_theme = wl_cursor_theme_load(cursor_theme, cursor_size, cmm->wlShm);
+	wl_list_for_each(seat, &cmm->seat_list, link) {
+    	seat->cursor_theme = wl_cursor_theme_load(cursor_theme, cursor_size,
+												  cmm->wlShm);
 
-    cmm->cursors = MEM_ALLOC(ARRAY_LENGTH(cursors) * sizeof(cmm->cursors[0]));
+    	seat->cursors = MEM_ALLOC(
+				ARRAY_LENGTH(cursors) * sizeof(seat->cursors[0]));
 
-    for (i = 0; i < ARRAY_LENGTH(cursors); i++) {
-        cursor = NULL;
+    	for (i = 0; i < ARRAY_LENGTH(cursors); i++) {
+        	cursor = NULL;
 
-        for (j = 0; !cursor && j < cursors[i].count; ++j) {
-            cursor = wl_cursor_theme_get_cursor(
-                cmm->cursor_theme, cursors[i].names[j]);
-        }
+        	for (j = 0; !cursor && j < cursors[i].count; ++j) {
+            	cursor = wl_cursor_theme_get_cursor(
+                	seat->cursor_theme, cursors[i].names[j]);
+        	}
 
-        if (!cursor) {
-            fprintf(stderr, "could not load cursor '%s'\n",
-                    cursors[i].names[0]);
-        }
+        	if (!cursor) {
+            	fprintf(stderr, "could not load cursor '%s'\n",
+                    	cursors[i].names[0]);
+        	}
 
-        cmm->cursors[i] = cursor;
-    }
+        	seat->cursors[i] = cursor;
+
+        	seat->pointer_surface =
+            	wl_compositor_create_surface(cmm->wlCompositor);
+
+        	seat->current_cursor = CURSOR_LEFT_PTR;
+    	}
+	}
 }
 
 static void
 destroy_cursors(struct wlContextCommon *cmm)
 {
-    if (cmm->cursor_theme) {
-        wl_cursor_theme_destroy(cmm->cursor_theme);
-    }
+	struct seat *seat;
 
-    free(cmm->cursors);
+	wl_list_for_each(seat, &cmm->seat_list, link) {
+    	if (seat->cursor_theme) {
+        	wl_cursor_theme_destroy(seat->cursor_theme);
+    	}
+
+    	free(seat->cursors);
+
+    	if (seat->pointer_surface) {
+        	wl_surface_destroy(seat->pointer_surface);
+    	}
+	}
 }
 
 /**
@@ -1020,10 +1091,6 @@ static void
 destroyWLContextCommon(struct wlContextCommon *p_wlCtx)
 {
     destroy_cursors(p_wlCtx);
-
-    if (p_wlCtx->pointer_surface) {
-        wl_surface_destroy(p_wlCtx->pointer_surface);
-    }
 
     if (p_wlCtx->wlCompositor) {
         wl_compositor_destroy(p_wlCtx->wlCompositor);
@@ -1463,6 +1530,7 @@ int main(int argc, char **argv)
     wl_list_init(&launcher_wlCtxList);
     wl_list_init(&wlCtxCommon->list_wlContextStruct);
 	wl_list_init(&wlCtxCommon->outputs);
+	wl_list_init(&wlCtxCommon->seat_list);
 
     struct hmi_homescreen_config *hmi_config = hmi_homescreen_config_create();
     wlCtxCommon->hmi_config = hmi_config;
@@ -1484,14 +1552,8 @@ int main(int argc, char **argv)
     wl_display_dispatch(wlCtxCommon->wlDisplay);
     wl_display_roundtrip(wlCtxCommon->wlDisplay);
 
-    if (wlCtxCommon->hmi_config->cursor_theme) {
+    if (wlCtxCommon->hmi_config->cursor_theme)
         create_cursors(wlCtxCommon);
-
-        wlCtxCommon->pointer_surface =
-            wl_compositor_create_surface(wlCtxCommon->wlCompositor);
-
-        wlCtxCommon->current_cursor = CURSOR_LEFT_PTR;
-    }
 
     /* create desktop widgets */
 
@@ -1547,6 +1609,7 @@ int main(int argc, char **argv)
 
 	config_destroy(hmi_config);
 	outputs_destroy(wlCtxCommon);
+	seats_destroy(wlCtxCommon);
     destroyWLContextCommon(wlCtxCommon);
     free(wlCtxCommon);
 

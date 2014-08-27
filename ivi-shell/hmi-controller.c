@@ -171,6 +171,8 @@ struct hmi_controller
     struct weston_compositor           *compositor;
     struct weston_process               process;
     struct wl_listener                  destroy_listener;
+
+	struct hmi_controller_screen       *app_screen;
 };
 
 struct launcher_info
@@ -810,30 +812,16 @@ set_notification_create_surface(struct ivi_layout_surface *ivisurf,
     struct hmi_controller* hmi_ctrl = userdata;
     struct ivi_layout_layer *application_layer;
     int32_t ret = 0;
-	struct weston_seat *seat;
-	struct hmi_controller_screen *hmi_screen, *target_screen;
-	uint32_t ix = 0;
 
     /* skip ui widgets */
     if (is_surf_in_uiWidget(hmi_ctrl, ivisurf)) {
         return;
     }
 
-	wl_list_for_each(seat, &hmi_ctrl->compositor->seat_list, link) {
-		if (seat->pointer) {
-			ix = (uint32_t)wl_fixed_to_int(seat->pointer->x);
-			break;
-		}
-	}
+	if (hmi_ctrl->app_screen == NULL)
+		return;
 
-	target_screen = NULL;
-	wl_list_for_each(hmi_screen, &hmi_ctrl->ivi_screens, link) {
-		if ((target_screen == NULL) ||
-			(hmi_screen->x <= ix && ix < hmi_screen->x + hmi_screen->width))
-			target_screen = hmi_screen;
-	}
-
-	application_layer = target_screen->application_layer.ivilayer;
+	application_layer = hmi_ctrl->app_screen->application_layer.ivilayer;
 
     ret = ivi_layout_layerAddSurface(application_layer, ivisurf);
     assert(!ret);
@@ -1020,7 +1008,8 @@ hmi_controller_create(struct weston_compositor *ec)
     	hmi_screen->workspace_fade.anima_set = hmi_screen->anima_set;
 	}
 
-    
+    hmi_ctrl->app_screen = NULL;
+
     ivi_layout_addNotificationCreateSurface(set_notification_create_surface, hmi_ctrl);
     ivi_layout_addNotificationRemoveSurface(set_notification_remove_surface, hmi_ctrl);
     ivi_layout_addNotificationConfigureSurface(set_notification_configure_surface, hmi_ctrl);
@@ -1484,6 +1473,7 @@ struct pointer_grab {
     struct ivi_layout_layer *layer;
     struct wl_resource *resource;
 	struct hmi_controller_screen *hmi_screen;
+	struct wl_resource *seat_resource;
 };
 
 struct touch_grab {
@@ -1491,6 +1481,7 @@ struct touch_grab {
     struct ivi_layout_layer *layer;
     struct wl_resource *resource;
 	struct hmi_controller_screen *hmi_screen;
+	struct wl_resource *seat_resource;
 };
 
 struct move_grab {
@@ -1566,6 +1557,7 @@ hmi_controller_move_animation_destroy(struct hmi_controller_animation *animation
 
 static void
 move_workspace_grab_end(struct move_grab *move, struct wl_resource* resource,
+						struct wl_resource *seat_resource,
                         wl_fixed_t grab_x, struct ivi_layout_layer *layer,
 						struct hmi_controller_screen *hmi_screen)
 {
@@ -1642,7 +1634,7 @@ move_workspace_grab_end(struct move_grab *move, struct wl_resource* resource,
     hmi_ctrl->workspace_swipe_animation = animation;
     animation_set_add_animation(hmi_screen->anima_set, &animation->base);
 
-    ivi_hmi_controller_send_workspace_end_control(resource, move->is_moved);
+    ivi_hmi_controller_send_workspace_end_control(resource, seat_resource, move->is_moved);
 }
 
 static void
@@ -1652,7 +1644,8 @@ pointer_move_workspace_grab_end(struct pointer_grab *grab)
     struct ivi_layout_layer *layer = pnt_move_grab->base.layer;
 
     move_workspace_grab_end(&pnt_move_grab->move, grab->resource,
-                            grab->grab.pointer->grab_x, layer, grab->hmi_screen);
+							grab->seat_resource, grab->grab.pointer->grab_x,
+							layer, grab->hmi_screen);
 
     weston_pointer_end_grab(grab->grab.pointer);
 }
@@ -1664,7 +1657,8 @@ touch_move_workspace_grab_end(struct touch_grab *grab)
     struct ivi_layout_layer *layer = tch_move_grab->base.layer;
 
     move_workspace_grab_end(&tch_move_grab->move, grab->resource,
-                            grab->grab.touch->grab_x, layer, grab->hmi_screen);
+							grab->seat_resource, grab->grab.touch->grab_x,
+							layer, grab->hmi_screen);
 
     weston_touch_end_grab(grab->grab.touch);
 }
@@ -1882,10 +1876,12 @@ move_grab_init_workspace(struct move_grab* move,
 
 static struct pointer_move_grab *
 create_workspace_pointer_move(struct weston_pointer *pointer, struct wl_resource* resource,
+							  struct wl_resource* seat_resource,
 							  struct hmi_controller_screen *hmi_screen)
 {
     struct pointer_move_grab *pnt_move_grab = MEM_ALLOC(sizeof(*pnt_move_grab));
     pnt_move_grab->base.resource = resource;
+	pnt_move_grab->base.seat_resource = seat_resource;
 	pnt_move_grab->base.hmi_screen = hmi_screen;
     move_grab_init_workspace(&pnt_move_grab->move, pointer->grab_x, pointer->grab_y, hmi_screen);
     return pnt_move_grab;
@@ -1893,10 +1889,12 @@ create_workspace_pointer_move(struct weston_pointer *pointer, struct wl_resource
 
 static struct touch_move_grab *
 create_workspace_touch_move(struct weston_touch *touch, struct wl_resource* resource,
+						    struct wl_resource *seat_resource,
 							struct hmi_controller_screen *hmi_screen)
 {
     struct touch_move_grab *tch_move_grab = MEM_ALLOC(sizeof(*tch_move_grab));
     tch_move_grab->base.resource = resource;
+	tch_move_grab->base.seat_resource = seat_resource;
 	tch_move_grab->base.hmi_screen = hmi_screen;
     tch_move_grab->is_active = 1;
     move_grab_init_workspace(&tch_move_grab->move, touch->grab_x,touch->grab_y, hmi_screen);
@@ -1938,7 +1936,8 @@ ivi_hmi_controller_workspace_control(struct wl_client *client,
 
     switch (device) {
     case HMI_GRAB_DEVICE_POINTER:
-        pnt_move_grab = create_workspace_pointer_move(seat->pointer, resource, hmi_screen);
+        pnt_move_grab = create_workspace_pointer_move(seat->pointer, resource,
+												seat_resource, hmi_screen);
 
         pointer_grab_start(
             &pnt_move_grab->base, layer, &pointer_move_grab_workspace_interface,
@@ -1946,7 +1945,8 @@ ivi_hmi_controller_workspace_control(struct wl_client *client,
         break;
 
     case HMI_GRAB_DEVICE_TOUCH:
-        tch_move_grab = create_workspace_touch_move(seat->touch, resource, hmi_screen);
+        tch_move_grab = create_workspace_touch_move(seat->touch, resource,
+												seat_resource, hmi_screen);
 
         touch_grab_start(
             &tch_move_grab->base, layer, &touch_move_grab_workspace_interface,
@@ -1999,6 +1999,20 @@ ivi_hmi_controller_home(struct wl_client *client,
     }
 }
 
+static void
+ivi_hmi_controller_set_app_screen(struct wl_client *client,
+								  struct wl_resource *resource,
+								  struct wl_resource *output_resource)
+{
+    struct hmi_controller *hmi_ctrl = wl_resource_get_user_data(resource);
+	struct hmi_controller_screen *hmi_screen = get_hmi_screen(hmi_ctrl, output_resource);
+
+	if (hmi_screen == NULL)
+		return;
+
+	hmi_ctrl->app_screen = hmi_screen;
+}
+
 /**
  * binding ivi-hmi-controller implementation
  */
@@ -2006,7 +2020,8 @@ static const struct ivi_hmi_controller_interface ivi_hmi_controller_implementati
     ivi_hmi_controller_UI_ready,
     ivi_hmi_controller_workspace_control,
     ivi_hmi_controller_switch_mode,
-    ivi_hmi_controller_home
+    ivi_hmi_controller_home,
+	ivi_hmi_controller_set_app_screen
 };
 
 static void
